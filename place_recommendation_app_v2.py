@@ -6,25 +6,23 @@ import pandas as pd
 import requests
 from dotenv import load_dotenv
 import folium
+import streamlit as st
 from streamlit_folium import st_folium
 from dotenv import load_dotenv
 import os
-
+import time
 
 # .env 파일 로드
 load_dotenv()
-
-# OpenAI 및 Google Maps API 키 설정
-openai.api_key = os.getenv("OPENAI_API_KEY")  # .env 파일에서 OpenAI API 키 가져오기
-google_maps_api_key = os.getenv("API_KEY")  # .env 파일에서 Google Maps API 키 가져오기
+openai.api_key = os.getenv("OPENAI_API_KEY")
+google_maps_api_key = os.getenv("GOOGLE_MAPS_API_KEY")
 
 # FAISS 및 데이터 로드
-faiss_index_path = "faiss_index.bin"  # 저장된 FAISS 파일 경로
-csv_data_path = "places_reviews_with_embeddings(final_2).csv"  # 메타데이터 CSV 파일 경로
+faiss_index_path = "./faiss_index.bin"  # 저장된 FAISS 파일 경로
+csv_data_path = "./reviews_embeddings.csv"  # 메타데이터 CSV 파일 경로
 
 index = faiss.read_index(faiss_index_path)  # FAISS 인덱스 로드
 metadata = pd.read_csv(csv_data_path)  # 장소 정보 로드
-
 
 def get_embedding(text):
     response = openai.Embedding.create(
@@ -34,20 +32,36 @@ def get_embedding(text):
     # 응답에서 임베딩 데이터 추출
     return response['data'][0]['embedding']
 
-
-
-# Google Maps에서 위치 정보 가져오기
-def get_location(name, address):
-    url = f"https://maps.googleapis.com/maps/api/geocode/json?address={name},+{address}&key={google_maps_api_key}"
-    response = requests.get(url).json()
-    if response['results']:
-        location = response['results'][0]['geometry']['location']
-        return location['lat'], location['lng']
-    return None, None
+# Google Maps에서 위치 정보 가져오기 (개선된 버전)
+def get_location(name, address, max_retries=3):
+    for attempt in range(max_retries):
+        try:
+            url = f"https://maps.googleapis.com/maps/api/geocode/json?address={name},+{address}&key={google_maps_api_key}"
+            response = requests.get(url, timeout=10)
+            response.raise_for_status()  # HTTP 오류 발생 시 예외 처리
+            
+            data = response.json()
+            if data['status'] == 'OK' and data['results']:
+                location = data['results'][0]['geometry']['location']
+                return location['lat'], location['lng']
+            elif data['status'] == 'ZERO_RESULTS':
+                st.warning(f"위치를 찾을 수 없습니다: {name}, {address}")
+            else:
+                st.error(f"Google Maps API 오류: {data['status']}")
+            
+            return None, None
+        
+        except requests.exceptions.RequestException as e:
+            st.error(f"네트워크 오류 발생 (시도 {attempt + 1}/{max_retries}): {e}")
+            if attempt < max_retries - 1:
+                time.sleep(2)  # 재시도 전 2초 대기
+            else:
+                st.error("위치 정보를 가져오는 데 실패했습니다.")
+                return None, None
 
 # Streamlit 애플리케이션
 st.title("장소 추천 및 지도 표시 서비스")
-user_input = st.text_input("검색어를 입력하세요", placeholder="예: 24시 운동복 대여 가능한 헬스장")
+user_input = st.text_input("검색어를 입력하세요", placeholder="찾는 장소를 입력하세요.")
 
 if user_input:
     # 사용자 입력 임베딩
@@ -83,6 +97,8 @@ if user_input:
                 "longitude": lng
             })
     
+    # 위치 정보가 있는 경우에만 지도 생성
+    if locations:
         # HTML 및 JavaScript 생성
         html_code = f"""
         <!DOCTYPE html>
@@ -144,8 +160,7 @@ if user_input:
         </html>
         """
 
-    # Streamlit에서 HTML 출력
-    st.components.v1.html(html_code, height=600)
-
-
-
+        # Streamlit에서 HTML 출력
+        st.components.v1.html(html_code, height=600)
+    else:
+        st.warning("선택된 장소들의 위치 정보를 가져올 수 없습니다.")
