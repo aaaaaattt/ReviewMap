@@ -1,0 +1,7 @@
+openai
+streamlit
+faiss-cpu
+numpy
+pandas
+requests
+sklearn
