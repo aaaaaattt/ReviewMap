@@ -1,5 +1,6 @@
-openai
+--upgrade pip
 streamlit
+openai
 faiss-cpu
 numpy
 pandas
