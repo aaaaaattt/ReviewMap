@@ -8,14 +8,42 @@ import time
 import os
 from openai import OpenAI
 
+# 최상단에 배치
+st.set_page_config(
+    page_title="장소 추천 및 지도 표시 서비스",
+    page_icon="🗺️",
+    layout="wide",
+    initial_sidebar_state="expanded",
+    menu_items={
+        'Get Help': None,
+        'Report a bug': None,
+        'About': None
+    }
+)
+
+# 스타일 추가
+st.markdown("""
+    <style>
+        .css-1d391kg {
+            width: 320px;
+        }
+        .css-1v0mbdj.e115fcil1 {
+            display: block;
+        }
+        .sidebar .sidebar-content {
+            width: 320px;
+        }
+    </style>
+""", unsafe_allow_html=True)
+
 # .env 파일 로드
 load_dotenv()
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 google_maps_api_key = os.getenv("GOOGLE_MAPS_API_KEY")
 
 # FAISS 및 데이터 로드
-faiss_index_path = "./북구.bin"
-csv_data_path = "./북구.csv"
+faiss_index_path = "./faiss_index.bin"
+csv_data_path = "./reviews_embeddings.csv"
 
 index = faiss.read_index(faiss_index_path)
 metadata = pd.read_csv(csv_data_path)
@@ -56,10 +84,11 @@ def get_location(name, address, max_retries=3):
 # Streamlit 애플리케이션
 st.title("장소 추천 및 지도 표시 서비스")
 
-# 사이드바에 컨트롤 추가
-st.sidebar.header("검색 설정")
-min_similarity = st.sidebar.slider("최소 유사도 점수", 0.0, 1.0, 0.5, 0.01)
-num_results = st.sidebar.slider("표시할 결과 개수", 1, 20, 5)
+ # 기존 사이드바 코드를 다음과 같이 수정
+with st.sidebar:
+    st.header("검색 설정")
+    min_similarity = st.slider("최소 유사도 점수", 0.0, 1.0, 0.5, 0.01)
+    num_results = st.slider("표시할 결과 개수", 1, 20, 5)
 
 user_input = st.text_input("검색어를 입력하세요", placeholder="찾는 장소를 입력하세요.")
 
