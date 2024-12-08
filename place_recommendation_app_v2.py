@@ -8,33 +8,13 @@ import time
 import os
 from openai import OpenAI
 
-# 최상단에 배치
+# 반드시 첫 번째 streamlit 명령어로 실행되어야 함
 st.set_page_config(
     page_title="장소 추천 및 지도 표시 서비스",
     page_icon="🗺️",
     layout="wide",
-    initial_sidebar_state="expanded",
-    menu_items={
-        'Get Help': None,
-        'Report a bug': None,
-        'About': None
-    }
+    initial_sidebar_state="expanded"
 )
-
-# 스타일 추가
-st.markdown("""
-    <style>
-        .css-1d391kg {
-            width: 320px;
-        }
-        .css-1v0mbdj.e115fcil1 {
-            display: block;
-        }
-        .sidebar .sidebar-content {
-            width: 320px;
-        }
-    </style>
-""", unsafe_allow_html=True)
 
 # .env 파일 로드
 load_dotenv()
@@ -84,7 +64,7 @@ def get_location(name, address, max_retries=3):
 # Streamlit 애플리케이션
 st.title("장소 추천 및 지도 표시 서비스")
 
- # 기존 사이드바 코드를 다음과 같이 수정
+# 사이드바에 컨트롤 추가
 with st.sidebar:
     st.header("검색 설정")
     min_similarity = st.slider("최소 유사도 점수", 0.0, 1.0, 0.5, 0.01)
@@ -137,31 +117,48 @@ if user_input:
                 <script async defer src="https://maps.googleapis.com/maps/api/js?key={google_maps_api_key}&callback=initMap"></script>
                 <script>
                   function initMap() {{
+                    const locations = {locations};
+                    let initialCenter = {{ lat: 37.5665, lng: 126.9780 }};  // 서울 기본 중심점
+                    
+                    // 첫 번째 위치가 있다면 그 위치를 중심점으로 설정
+                    if (locations.length > 0) {{
+                      initialCenter = {{
+                        lat: locations[0].latitude,
+                        lng: locations[0].longitude
+                      }};
+                    }}
+
                     const map = new google.maps.Map(document.getElementById('map'), {{
                       zoom: 12,
-                      center: {{ lat: 37.5665, lng: 126.9780 }}
+                      center: initialCenter
                     }});
 
                     const bounds = new google.maps.LatLngBounds();
-                    const locations = {locations};
-
+                    
                     locations.forEach((location) => {{
                       if (location.latitude && location.longitude) {{
-                        const markerScale = 10 + (location.similarity * 20);
-                        const redValue = Math.floor(255 * location.similarity);
-                        const greenValue = Math.floor(255 * (1-location.similarity));
+                        const position = new google.maps.LatLng(
+                          location.latitude,
+                          location.longitude
+                        );
+                        
+                        // 유사도에 따른 마커 스케일 조정
+                        const markerScale = 15 + (location.similarity * 25);
+                        
+                        // HSL 색상 모델을 사용하여 더 뚜렷한 색상 차이
+                        const hue = (location.similarity * 120); // 0(빨강)에서 120(초록)
                         
                         const marker = new google.maps.Marker({{
-                          position: {{ lat: location.latitude, lng: location.longitude }},
+                          position: position,
                           map: map,
                           title: location.name,
                           icon: {{
                             path: google.maps.SymbolPath.CIRCLE,
                             scale: markerScale,
-                            fillColor: 'rgb(' + redValue + ',' + greenValue + ',0)',
-                            fillOpacity: 0.9,
-                            strokeWeight: 1,
-                            strokeColor: "#000"
+                            fillColor: `hsl(${{hue}}, 100%, 50%)`,
+                            fillOpacity: 0.8,
+                            strokeWeight: 2,
+                            strokeColor: "#000000"
                           }}
                         }});
 
@@ -179,11 +176,18 @@ if user_input:
                           infoWindow.open(map, marker);
                         }});
 
-                        bounds.extend(marker.position);
+                        bounds.extend(position);
                       }}
                     }});
 
-                    map.fitBounds(bounds);
+                    // 마커가 하나 이상 있을 때만 bounds 적용
+                    if (locations.length > 0) {{
+                      map.fitBounds(bounds);
+                      // 줌 레벨 제한 설정
+                      google.maps.event.addListenerOnce(map, 'bounds_changed', () => {{
+                        if (map.getZoom() > 15) map.setZoom(15);
+                      }});
+                    }}
                   }}
                 </script>
               </head>
