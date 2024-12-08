@@ -1,46 +1,35 @@
 import streamlit as st
-import faiss
 import numpy as np
 import pandas as pd
 import requests
 from dotenv import load_dotenv
+import faiss
 import time
-from openai import OpenAI  # OpenAI 라이브러리 최신 버전 import
+import os
+from openai import OpenAI
+
+
 
 # .env 파일 로드
 load_dotenv()
-
-# Secrets에서 API 키 가져오기
-openai_api_key = st.secrets["OPENAI_API_KEY"]
-google_maps_api_key = st.secrets["GOOGLE_MAPS_API_KEY"]
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+google_maps_api_key = os.getenv("GOOGLE_MAPS_API_KEY")
 
 # FAISS 및 데이터 로드
-faiss_index_path = "./faiss_index.bin"  # 저장된 FAISS 파일 경로
-csv_data_path = "./reviews_embeddings.csv"  # 메타데이터 CSV 파일 경로
+faiss_index_path = "./faiss_index.bin"
+csv_data_path = "./reviews_embeddings.csv"
 
-# OpenAI 클라이언트 초기화
-client = OpenAI(api_key=openai_api_key)
-
-def get_embedding(text):
-    """텍스트의 임베딩을 생성하는 함수"""
-    try:
-        response = client.embeddings.create(
-            model="text-embedding-ada-002",
-            input=text
-        )
-        # 최신 OpenAI 라이브러리 메서드로 수정
-        return response.data[0].embedding
-    except Exception as e:
-        st.error(f"임베딩 생성 중 오류 발생: {e}")
-        return None
-
-# FAISS 인덱스와 메타데이터 로드
 index = faiss.read_index(faiss_index_path)
 metadata = pd.read_csv(csv_data_path)
 
-# Google Maps에서 위치 정보 가져오기 (개선된 버전)
+def get_embedding(text):
+    response = client.embeddings.create(
+        model="text-embedding-ada-002",
+        input=text
+    )
+    return response.data[0].embedding
+
 def get_location(name, address, max_retries=3):
-    """장소의 위도와 경도를 가져오는 함수"""
     for attempt in range(max_retries):
         try:
             url = f"https://maps.googleapis.com/maps/api/geocode/json?address={name},+{address}&key={google_maps_api_key}"
@@ -61,33 +50,45 @@ def get_location(name, address, max_retries=3):
         except requests.exceptions.RequestException as e:
             st.error(f"네트워크 오류 발생 (시도 {attempt + 1}/{max_retries}): {e}")
             if attempt < max_retries - 1:
-                time.sleep(2)  # 재시도 전 2초 대기
+                time.sleep(2)
             else:
                 st.error("위치 정보를 가져오는 데 실패했습니다.")
                 return None, None
 
-def main():
-    """Streamlit 애플리케이션의 메인 함수"""
-    st.title("장소 추천 및 지도 표시 서비스")
-    user_input = st.text_input("검색어를 입력하세요", placeholder="찾는 장소를 입력하세요.")
+# Streamlit 애플리케이션
+st.title("장소 추천 및 지도 표시 서비스")
 
-    if user_input:
+ # 기존 사이드바 코드를 다음과 같이 수정
+with st.sidebar:
+    st.header("검색 설정")
+    min_similarity = st.slider("최소 유사도 점수", 0.0, 1.0, 0.5, 0.01)
+    num_results = st.slider("표시할 결과 개수", 1, 20, 5)
+
+user_input = st.text_input("검색어를 입력하세요", placeholder="찾는 장소를 입력하세요.")
+
+if user_input:
+    # 사용자 입력 임베딩
+    with st.spinner("입력 텍스트 임베딩 생성 중..."):
         query_embedding = np.array(get_embedding(user_input)).astype('float32').reshape(1, -1)
+    
+    # FAISS에서 유사도 계산
+    with st.spinner("유사도 계산 중..."):
+        distances, indices = index.search(query_embedding, k=num_results * 2)  # 필터링을 위해 더 많은 결과 검색
         
-        st.write("유사도 계산 중...")
-        distances, indices = index.search(query_embedding, k=5)  # 상위 5개 결과 반환
-        
-        # 상위 결과 추출
+        # 상위 결과 추출 및 유사도 필터링
         results = metadata.iloc[indices[0]].copy()
-        results['similarity'] = 1 - distances[0] / 2  # 코사인 유사도 계산 (1 - L2 거리 / 2)
+        results['similarity'] = 1 - distances[0] / 2
+        results = results[results['similarity'] >= min_similarity]
+        results = results.head(num_results)
 
+    if len(results) > 0:
         # 추천된 장소 및 리뷰 표시
         st.write("추천된 장소 및 리뷰:")
         st.dataframe(results[['name', 'address', 'review_text', 'similarity']])
 
+        # Google Maps 동적 지도
         st.write("**Google Maps 동적 지도**")
         
-        # JSON 형태로 변환
         locations = []
         for _, row in results.iterrows():
             lat, lng = get_location(row['name'], row['address'])
@@ -96,14 +97,12 @@ def main():
                     "name": row['name'],
                     "address": row['address'],
                     "review_text": row['review_text'],
-                    "similarity": row['similarity'],
+                    "similarity": float(row['similarity']),
                     "latitude": lat,
                     "longitude": lng
                 })
         
-        # 위치 정보가 있는 경우에만 지도 생성
         if locations:
-            # HTML 및 JavaScript 생성
             html_code = f"""
             <!DOCTYPE html>
             <html>
@@ -114,7 +113,7 @@ def main():
                   function initMap() {{
                     const map = new google.maps.Map(document.getElementById('map'), {{
                       zoom: 12,
-                      center: {{ lat: 37.5665, lng: 126.9780 }}  // 서울 중심 좌표
+                      center: {{ lat: 37.5665, lng: 126.9780 }}
                     }});
 
                     const bounds = new google.maps.LatLngBounds();
@@ -122,14 +121,18 @@ def main():
 
                     locations.forEach((location) => {{
                       if (location.latitude && location.longitude) {{
+                        const markerScale = 10 + (location.similarity * 20);
+                        const redValue = Math.floor(255 * location.similarity);
+                        const greenValue = Math.floor(255 * (1-location.similarity));
+                        
                         const marker = new google.maps.Marker({{
                           position: {{ lat: location.latitude, lng: location.longitude }},
                           map: map,
                           title: location.name,
                           icon: {{
                             path: google.maps.SymbolPath.CIRCLE,
-                            scale: 20,
-                            fillColor: "rgb(255, 0, 0)",
+                            scale: markerScale,
+                            fillColor: 'rgb(' + redValue + ',' + greenValue + ',0)',
                             fillOpacity: 0.9,
                             strokeWeight: 1,
                             strokeColor: "#000"
@@ -164,10 +167,8 @@ def main():
             </html>
             """
 
-            # Streamlit에서 HTML 출력
             st.components.v1.html(html_code, height=600)
         else:
             st.warning("선택된 장소들의 위치 정보를 가져올 수 없습니다.")
-
-if __name__ == "__main__":
-    main()
+    else:
+        st.warning("설정된 유사도 기준을 만족하는 결과가 없습니다. 최소 유사도 점수를 낮추어 보세요.")
